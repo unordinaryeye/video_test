@@ -1,0 +1,18 @@
+# 영상 수신
+opencv-python-headless==4.9.0.80
+
+# 모델 서버 + 웹 뷰어
+fastapi==0.111.0
+uvicorn==0.30.1
+ultralytics>=8.3.0
+python-multipart==0.0.9
+
+# API 클라이언트
+httpx==0.27.0
+
+# Sink (Kafka - 선택)
+# confluent-kafka==2.4.0
+
+# 공통
+numpy>=1.26.0
+Pillow>=10.0.0

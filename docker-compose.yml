@@ -1,0 +1,35 @@
+services:
+  model-server:
+    build:
+      context: .
+      dockerfile: model_server/Dockerfile
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      model-server:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - CAPTURE_SOURCE_TYPE=synthetic
+      - MODEL_API_URL=http://model-server:8000/predict
+      - SINK_TYPE=console,web
+    volumes:
+      - ./results:/app/results
