@@ -7,14 +7,12 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import asdict
 from typing import Optional
 
 from inference.client import ModelClient
-from rules.loader import Rules
 from rules.detection_filter import filter_detections
 from rules.zone_checker import check_zones
-from rules.motion_gate import MotionGateState
+from rules.state import RulesState
 
 logger = logging.getLogger("inference.worker")
 
@@ -25,15 +23,12 @@ class InferenceWorker:
         input_queue: queue.Queue,
         output_queue: queue.Queue,
         client: ModelClient,
-        rules: Optional[Rules] = None,
+        rules_state: Optional[RulesState] = None,
     ):
         self._input = input_queue
         self._output = output_queue
         self._client = client
-        self._rules = rules
-        self._motion_gate = (
-            MotionGateState(rules.motion_gate) if rules is not None else None
-        )
+        self._rules_state = rules_state
         self._running = False
         self._thread = None
         self._processed = 0
@@ -53,16 +48,16 @@ class InferenceWorker:
 
     def _apply_rules(self, detections: list[dict]) -> tuple[list[dict], list[dict]]:
         """룰 적용. 반환: (필터링된 detections, zone_events dict 목록)."""
-        if self._rules is None:
+        if self._rules_state is None:
             return detections, []
 
-        filtered = filter_detections(detections, self._rules.detection)
+        rules, motion_gate = self._rules_state.current()
+        filtered = filter_detections(detections, rules.detection)
 
-        if self._motion_gate is not None:
-            idle_ids = self._motion_gate.update(filtered)
-            filtered = self._motion_gate.filter(filtered, idle_ids)
+        idle_ids = motion_gate.update(filtered)
+        filtered = motion_gate.filter(filtered, idle_ids)
 
-        events = check_zones(filtered, self._rules.zones)
+        events = check_zones(filtered, rules.zones)
         events_dict = [
             {
                 "zone_name": e.zone_name,

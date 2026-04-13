@@ -23,14 +23,14 @@ from config import PipelineConfig, CaptureConfig, ModelConfig, SinkConfig
 from capture.capture import FrameCapture
 from inference.client import ModelClient
 from inference.worker import InferenceWorker
-from rules.loader import load_rules
+from rules.state import RulesState
 from sink.worker import SinkWorker
 from sink.console_sink import ConsoleSink
 from sink.file_sink import FileSink
 from sink.multi_sink import MultiSink
 
 
-def _create_one_sink(sink_type: str, config: SinkConfig):
+def _create_one_sink(sink_type: str, config: SinkConfig, admin_ctx: dict | None = None):
     """단일 Sink 생성."""
     sink_type = sink_type.strip()
     if sink_type == "console":
@@ -39,7 +39,7 @@ def _create_one_sink(sink_type: str, config: SinkConfig):
         return FileSink(config.output_path)
     elif sink_type == "web":
         from sink.web_sink import WebSink
-        return WebSink(port=8080)
+        return WebSink(port=8080, admin_ctx=admin_ctx)
     elif sink_type == "kafka":
         from sink.kafka_sink import KafkaSink
         return KafkaSink(config.kafka_bootstrap_servers, config.kafka_topic)
@@ -47,12 +47,12 @@ def _create_one_sink(sink_type: str, config: SinkConfig):
         raise ValueError(f"지원하지 않는 sink_type: {sink_type}")
 
 
-def create_sink(config: SinkConfig):
+def create_sink(config: SinkConfig, admin_ctx: dict | None = None):
     """sink_type에 따라 Sink 생성. 콤마로 구분하면 여러 Sink 동시 사용."""
     types = [t for t in config.sink_type.split(",") if t.strip()]
     if len(types) == 1:
-        return _create_one_sink(types[0], config)
-    return MultiSink([_create_one_sink(t, config) for t in types])
+        return _create_one_sink(types[0], config, admin_ctx)
+    return MultiSink([_create_one_sink(t, config, admin_ctx) for t in types])
 
 
 def build_config(args) -> PipelineConfig:
@@ -129,13 +129,14 @@ def main():
     logger.info(f"  룰 파일: {config.rules.rules_path or '(없음, 필터링 비활성)'}")
     logger.info("=" * 60)
 
-    # 0. 룰 로드
-    rules = load_rules(config.rules.rules_path)
+    # 0. 룰 상태 (런타임 재로드 가능)
+    rules_state = RulesState(config.rules.rules_path)
     if config.rules.rules_path:
+        r = rules_state.current()[0]
         logger.info(
-            f"룰 로드 완료 — classes={rules.detection.classes}, "
-            f"min_conf={rules.detection.min_confidence}, "
-            f"zones={len(rules.zones)}, motion_gate={rules.motion_gate.enabled}"
+            f"룰 로드 완료 — classes={r.detection.classes}, "
+            f"min_conf={r.detection.min_confidence}, "
+            f"zones={len(r.zones)}, motion_gate={r.motion_gate.enabled}"
         )
 
     # 1. 모델 클라이언트
@@ -154,8 +155,9 @@ def main():
 
     # 2. 컴포넌트 생성
     capture = FrameCapture(config.capture, frame_queue)
-    inference = InferenceWorker(frame_queue, result_queue, client, rules=rules)
-    sink = SinkWorker(result_queue, create_sink(config.sink))
+    inference = InferenceWorker(frame_queue, result_queue, client, rules_state=rules_state)
+    admin_ctx = {"rules_state": rules_state, "model_config": config.model}
+    sink = SinkWorker(result_queue, create_sink(config.sink, admin_ctx=admin_ctx))
 
     # 3. 시작 (순서: sink -> inference -> capture)
     sink.start()
