@@ -3,6 +3,7 @@
 import base64
 import io
 import logging
+import threading
 import time
 
 import numpy as np
@@ -15,6 +16,7 @@ logger = logging.getLogger("model-server")
 
 # --- 모델 로딩 (여기만 바꾸면 모델 교체) ---
 _model = None
+_predict_lock = threading.Lock()
 
 
 def load_model():
@@ -38,12 +40,14 @@ class PredictRequest(BaseModel):
     image_base64: str
     frame_id: int = 0
     timestamp: str = ""
+    use_tracking: bool = False
 
 
 class Detection(BaseModel):
     label: str
     confidence: float
     bbox: list[float]  # [x1, y1, x2, y2]
+    track_id: int | None = None
 
 
 class PredictResponse(BaseModel):
@@ -65,6 +69,12 @@ async def health():
     return {"status": "ok", "model_loaded": _model is not None}
 
 
+@app.get("/classes")
+async def classes():
+    model = get_model()
+    return {"classes": list(model.names.values())}
+
+
 @app.post("/predict", response_model=PredictResponse)
 async def predict(req: PredictRequest):
     try:
@@ -75,17 +85,26 @@ async def predict(req: PredictRequest):
         raise HTTPException(status_code=400, detail=f"이미지 디코딩 실패: {e}")
 
     model = get_model()
-    start = time.perf_counter()
-    results = model(frame, verbose=False)
-    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    with _predict_lock:
+        start = time.perf_counter()
+        if req.use_tracking:
+            results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
+        else:
+            results = model(frame, verbose=False)
+        elapsed_ms = (time.perf_counter() - start) * 1000
 
     detections = []
     for r in results:
         for box in r.boxes:
+            track_id = None
+            if req.use_tracking and box.id is not None:
+                track_id = int(box.id[0])
             detections.append(Detection(
                 label=r.names[int(box.cls[0])],
                 confidence=round(float(box.conf[0]), 3),
                 bbox=[round(float(c), 1) for c in box.xyxy[0]],
+                track_id=track_id,
             ))
 
     return PredictResponse(

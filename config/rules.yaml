@@ -1,0 +1,19 @@
+detection:
+  classes: [person]              # 빈 리스트 또는 생략 시 전체 통과
+  min_confidence: 0.5            # 0~1, 기본 0.0
+
+zones:
+  - name: "위험구역_A"
+    polygon: [[100,100], [500,100], [500,400], [100,400]]
+    rules:
+      - type: entry              # bbox 중심이 폴리곤 안이면 이벤트
+        classes: [person]        # 선택: 이 클래스만 대상 (생략시 전체)
+      - type: count_exceeds
+        threshold: 2
+        classes: [person]
+
+motion_gate:
+  enabled: false                 # 기본 비활성 (tracker 필요)
+  idle_seconds: 180
+  movement_threshold_px: 20
+  classes: [person]

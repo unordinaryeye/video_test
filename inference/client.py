@@ -32,6 +32,7 @@ class ModelClient:
             "image_base64": frame_data["image_base64"],
             "frame_id": frame_data["frame_id"],
             "timestamp": frame_data["timestamp"],
+            "use_tracking": self._config.use_tracking,
         }
 
         last_error = None

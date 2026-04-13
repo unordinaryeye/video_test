@@ -23,6 +23,7 @@ from config import PipelineConfig, CaptureConfig, ModelConfig, SinkConfig
 from capture.capture import FrameCapture
 from inference.client import ModelClient
 from inference.worker import InferenceWorker
+from rules.loader import load_rules
 from sink.worker import SinkWorker
 from sink.console_sink import ConsoleSink
 from sink.file_sink import FileSink
@@ -84,6 +85,13 @@ def build_config(args) -> PipelineConfig:
         or os.environ.get("SINK_TYPE")
         or config.sink.sink_type
     )
+    config.rules.rules_path = (
+        args.rules
+        or os.environ.get("RULES_PATH")
+        or config.rules.rules_path
+    )
+    if args.tracking or os.environ.get("USE_TRACKING", "").lower() in ("1", "true", "yes"):
+        config.model.use_tracking = True
 
     return config
 
@@ -95,6 +103,8 @@ def main():
     parser.add_argument("--fps", type=int)
     parser.add_argument("--model-url", dest="model_url")
     parser.add_argument("--sink", help="console | file | web | kafka (콤마로 구분 가능)")
+    parser.add_argument("--rules", help="YAML 룰 파일 경로 (예: config/rules.yaml)")
+    parser.add_argument("--tracking", action="store_true", help="객체 트래킹 활성화 (track_id 부여)")
     args = parser.parse_args()
 
     config = build_config(args)
@@ -115,7 +125,18 @@ def main():
     logger.info(f"  영상 소스: {config.capture.source_type} ({config.capture.source_uri})")
     logger.info(f"  모델 API: {config.model.api_url}")
     logger.info(f"  결과 전송: {config.sink.sink_type}")
+    logger.info(f"  트래킹: {config.model.use_tracking}")
+    logger.info(f"  룰 파일: {config.rules.rules_path or '(없음, 필터링 비활성)'}")
     logger.info("=" * 60)
+
+    # 0. 룰 로드
+    rules = load_rules(config.rules.rules_path)
+    if config.rules.rules_path:
+        logger.info(
+            f"룰 로드 완료 — classes={rules.detection.classes}, "
+            f"min_conf={rules.detection.min_confidence}, "
+            f"zones={len(rules.zones)}, motion_gate={rules.motion_gate.enabled}"
+        )
 
     # 1. 모델 클라이언트
     client = ModelClient(config.model)
@@ -133,7 +154,7 @@ def main():
 
     # 2. 컴포넌트 생성
     capture = FrameCapture(config.capture, frame_queue)
-    inference = InferenceWorker(frame_queue, result_queue, client)
+    inference = InferenceWorker(frame_queue, result_queue, client, rules=rules)
     sink = SinkWorker(result_queue, create_sink(config.sink))
 
     # 3. 시작 (순서: sink -> inference -> capture)

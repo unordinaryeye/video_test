@@ -1,6 +1,7 @@
 """파이프라인 전체 설정. 영상 소스와 모델을 여기서 교체."""
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass
@@ -20,6 +21,7 @@ class ModelConfig:
     health_url: str = "http://model-server:8000/health"
     timeout_sec: float = 5.0
     max_retries: int = 3
+    use_tracking: bool = False  # True면 model.track() 사용, Detection에 track_id 포함
 
 
 @dataclass
@@ -34,10 +36,17 @@ class SinkConfig:
 
 
 @dataclass
+class RulesConfig:
+    """룰 시스템 설정. None이면 필터링 비활성."""
+    rules_path: Optional[str] = None  # None이면 필터링 비활성
+
+
+@dataclass
 class PipelineConfig:
     """파이프라인 전체 설정."""
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     sink: SinkConfig = field(default_factory=SinkConfig)
+    rules: RulesConfig = field(default_factory=RulesConfig)
     queue_max_size: int = 30
     log_level: str = "INFO"
