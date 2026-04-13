@@ -2,6 +2,7 @@
 
 import base64
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -13,9 +14,32 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
+from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
 logger = logging.getLogger("sink.web")
+
+
+_FONT_CANDIDATES = [
+    "C:/Windows/Fonts/malgun.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+]
+
+
+def _load_font(size: int = 14):
+    for p in _FONT_CANDIDATES:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+_FONT = _load_font(14)
+_FONT_SMALL = _load_font(12)
 
 
 HTML_PAGE = """<!doctype html>
@@ -91,6 +115,12 @@ HTML_PAGE = """<!doctype html>
     <div class="video-box">
       <h2>실시간 영상 + 감지 결과</h2>
       <img src="/stream" alt="video stream" />
+      <div style="margin-top:8px; font-size:12px; color:#94a3b8; display:flex; gap:16px; flex-wrap:wrap;">
+        <span><span style="display:inline-block;width:10px;height:10px;background:#22d3ee;border-radius:2px;"></span> 통과 detection</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#ef4444;border-radius:2px;"></span> Zone 이벤트 발생</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border:2px solid #94a3b8;"></span> 비활성 Zone</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border:2px solid #ef4444;background:rgba(239,68,68,0.2);"></span> 활성 Zone</span>
+      </div>
     </div>
 
     <div class="sidebar">
@@ -380,6 +410,63 @@ class WebSink:
                 )
             time.sleep(0.05)
 
+    def _draw_overlays(self, frame: np.ndarray, detections: list, zone_events: list,
+                       frame_id: int, latency: float) -> np.ndarray:
+        """PIL로 zone polygon, detection box, 오버레이 텍스트를 그림."""
+        rules_state = self._admin.get("rules_state")
+        rules = rules_state.current()[0] if rules_state else None
+
+        active_zones = {e["zone_name"] for e in zone_events}
+        # 이벤트에 포함된 bbox 집합 (튜플로 키)
+        event_bboxes = set()
+        for e in zone_events:
+            for d in e.get("detections", []):
+                event_bboxes.add(tuple(d.get("bbox", [])))
+
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        # 1) Zone 폴리곤
+        if rules:
+            for zone in rules.zones:
+                pts = [(int(x), int(y)) for x, y in zone.polygon]
+                if len(pts) < 3:
+                    continue
+                is_active = zone.name in active_zones
+                outline = (239, 68, 68, 255) if is_active else (148, 163, 184, 255)
+                fill = (239, 68, 68, 60) if is_active else (148, 163, 184, 30)
+                draw.polygon(pts, fill=fill, outline=outline)
+                # 이름
+                lx, ly = pts[0]
+                draw.rectangle([lx, ly - 20, lx + len(zone.name) * 10 + 10, ly],
+                               fill=(15, 23, 42, 200))
+                draw.text((lx + 4, ly - 18), zone.name, fill=outline, font=_FONT_SMALL)
+
+        # 2) Detection 박스
+        for det in detections:
+            bbox = det.get("bbox", [])
+            if len(bbox) != 4:
+                continue
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            in_event = tuple(bbox) in event_bboxes
+            color = (239, 68, 68, 255) if in_event else (34, 211, 238, 255)
+            draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+
+            tid = det.get("track_id")
+            label = f"{det['label']} {det['confidence']:.2f}"
+            if tid is not None:
+                label = f"#{tid} " + label
+            tw = len(label) * 8 + 8
+            draw.rectangle([x1, y1 - 20, x1 + tw, y1], fill=color)
+            draw.text((x1 + 4, y1 - 18), label, fill=(15, 23, 42), font=_FONT_SMALL)
+
+        # 3) 좌상단 요약
+        overlay = f"Frame #{frame_id} | {latency:.0f}ms | {len(detections)} det | {len(zone_events)} evt"
+        draw.rectangle([0, 0, len(overlay) * 9 + 12, 28], fill=(15, 23, 42, 200))
+        draw.text((8, 6), overlay, fill=(34, 211, 238), font=_FONT)
+
+        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+
     def send(self, result: dict) -> None:
         image_b64 = result.get("image_base64")
         if not image_b64:
@@ -393,26 +480,10 @@ class WebSink:
 
         detections = result.get("detections", [])
         zone_events = result.get("zone_events", [])
-
-        for det in detections:
-            bbox = det.get("bbox", [])
-            if len(bbox) != 4:
-                continue
-            x1, y1, x2, y2 = [int(v) for v in bbox]
-            tid = det.get("track_id")
-            label = f"{det['label']} {det['confidence']:.2f}"
-            if tid is not None:
-                label = f"#{tid} " + label
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (34, 211, 238), 2)
-            cv2.rectangle(frame, (x1, y1 - 20), (x1 + len(label) * 9, y1), (34, 211, 238), -1)
-            cv2.putText(frame, label, (x1 + 2, y1 - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (15, 23, 42), 1)
-
         frame_id = result.get("frame_id", 0)
         latency = result.get("inference_time_ms", 0)
-        overlay = f"Frame #{frame_id} | {latency:.0f}ms | {len(detections)} det | {len(zone_events)} evt"
-        cv2.putText(frame, overlay, (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (34, 211, 238), 2)
+
+        frame = self._draw_overlays(frame, detections, zone_events, frame_id, latency)
 
         ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ok:
