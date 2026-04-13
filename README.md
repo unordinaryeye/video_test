@@ -338,6 +338,74 @@ SINK_TYPE=console,file,web
 
 ---
 
+## 룰 기반 필터링 (YAML)
+
+탐지 클래스, 신뢰도 임계값, 관심구역(ROI), 정지 객체 무시 등을 **코드 수정 없이 YAML로 변경**할 수 있습니다.
+
+### 사용법
+
+```bash
+python pipeline.py --source webcam --source-uri 0 \
+                   --model-url http://localhost:8001/predict \
+                   --sink console,web \
+                   --rules config/rules.yaml \
+                   --tracking
+```
+
+- `--rules` 없으면 모델이 내려주는 detection을 전부 통과시킵니다 (기존 동작).
+- `--tracking` 지정 시 모델 서버에서 ByteTrack으로 `track_id`를 부여받습니다. `motion_gate` 또는 향후 `dwell` 룰을 쓰려면 필요합니다.
+
+### YAML 스키마 (`config/rules.yaml`)
+
+```yaml
+detection:
+  classes: [person, car]          # 이 클래스만 통과 (빈 리스트/생략 시 전체)
+  min_confidence: 0.5             # 신뢰도 50% 미만 제외
+
+zones:
+  - name: "위험구역_A"
+    polygon: [[100,100], [500,100], [500,400], [100,400]]
+    rules:
+      - type: entry               # bbox 중심이 폴리곤 내부면 이벤트
+        classes: [person]
+      - type: count_exceeds       # 구역 내 객체 수가 threshold 초과 시 이벤트
+        threshold: 2
+        classes: [person]
+
+motion_gate:                      # tracking 필요
+  enabled: true
+  idle_seconds: 180               # 3분 이상 정지 상태면 탐지 중단
+  movement_threshold_px: 20       # 중심점 이동이 20px 미만이면 정지로 간주
+  classes: [person]               # person만 대상
+```
+
+### 지원 클래스 확인
+
+모델 서버가 알고 있는 클래스 목록:
+```bash
+curl http://localhost:8001/classes
+# {"classes":["person","bicycle","car", ...]}
+```
+
+기본 YOLOv8n은 COCO 80개 클래스. 커스텀 클래스(예: forklift)는 커스텀 학습 모델 필요.
+
+### 파이프라인 결과 구조
+
+룰 적용 후 `inference` 단계의 결과에 `zone_events` 필드가 추가됩니다:
+```json
+{
+  "frame_id": 42,
+  "detections": [ ... 필터링 통과한 것만 ... ],
+  "zone_events": [
+    {"zone_name": "위험구역_A", "rule_type": "entry", "detections": [...], "timestamp": "..."}
+  ],
+  "inference_time_ms": 38.2,
+  "total_latency_ms": 52.1
+}
+```
+
+---
+
 ## 설정 (config.py)
 
 모든 기본값은 `config.py`의 dataclass에 모여 있습니다. 우선순위:
@@ -353,6 +421,8 @@ CLI 인자 > 환경 변수 > config.py 기본값
 | `CAPTURE_FPS` | `--fps` | 프레임 추출 속도 |
 | `MODEL_API_URL` | `--model-url` | 추론 API 엔드포인트 |
 | `SINK_TYPE` | `--sink` | 결과 전송 종류 (콤마 구분) |
+| `RULES_PATH` | `--rules` | YAML 룰 파일 경로 |
+| `USE_TRACKING` | `--tracking` | 트래킹 활성화 (1/true/yes) |
 
 ---
 
