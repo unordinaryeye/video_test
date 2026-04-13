@@ -125,8 +125,11 @@
         <span>객체 트래킹 (track_id 부여, motion_gate 사용 시 필수)</span>
       </label>
       <div class="field" style="margin-top:12px;">
-        <label>캡처 FPS: <span id="fps-val">5</span> (1~30)</label>
-        <input type="range" id="fps-slider" min="1" max="30" step="1" value="5" />
+        <label>캡처 FPS (1~30)</label>
+        <div class="row" style="margin-top:0;">
+          <input type="range" id="fps-slider" min="1" max="30" step="1" value="5" style="flex:1;" />
+          <input type="number" id="fps-number" min="1" max="30" step="1" value="5" style="width:70px;" />
+        </div>
       </div>
     </div>
 
@@ -553,18 +556,23 @@ async function loadFps() {
   try {
     const f = await fetch("/fps").then(r => r.json());
     q("#fps-slider").value = f.fps;
-    q("#fps-val").textContent = f.fps;
+    q("#fps-number").value = f.fps;
   } catch (e) {}
 }
-q("#fps-slider").addEventListener("input", (e) => {
-  q("#fps-val").textContent = e.target.value;
-});
-q("#fps-slider").addEventListener("change", async (e) => {
+async function saveFps(val) {
+  const fps = Math.max(1, Math.min(30, parseInt(val) || 1));
   await fetch("/fps", {
     method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({fps: parseInt(e.target.value)}),
+    body: JSON.stringify({fps}),
   });
+}
+q("#fps-slider").addEventListener("input", (e) => { q("#fps-number").value = e.target.value; });
+q("#fps-slider").addEventListener("change", (e) => saveFps(e.target.value));
+q("#fps-number").addEventListener("input", (e) => {
+  const v = Math.max(1, Math.min(30, parseInt(e.target.value) || 1));
+  q("#fps-slider").value = v;
 });
+q("#fps-number").addEventListener("change", (e) => saveFps(e.target.value));
 async function loadClasses() {
   try {
     const c = await fetch("/classes").then(r => r.json());
