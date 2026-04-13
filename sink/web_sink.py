@@ -95,6 +95,10 @@ class _TrackingUpdate(BaseModel):
     enabled: bool
 
 
+class _FpsUpdate(BaseModel):
+    fps: int
+
+
 class WebSink:
     """FastAPI 기반 실시간 뷰어 + 관리 API."""
 
@@ -199,6 +203,21 @@ class WebSink:
                 raise HTTPException(503, "model_config 미설정")
             mc.use_tracking = bool(body.enabled)
             return {"enabled": mc.use_tracking}
+
+        @app.get("/fps")
+        def get_fps():
+            cap = self._admin.get("capture_config")
+            return {"fps": cap.fps if cap else 5}
+
+        @app.post("/fps")
+        def post_fps(body: _FpsUpdate):
+            cap = self._admin.get("capture_config")
+            if cap is None:
+                raise HTTPException(503, "capture_config 미설정")
+            if body.fps < 1 or body.fps > 60:
+                raise HTTPException(400, "fps는 1~60 범위")
+            cap.fps = body.fps
+            return {"fps": cap.fps}
 
         @app.get("/classes")
         def get_classes():

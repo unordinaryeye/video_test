@@ -119,11 +119,15 @@
 
   <div class="right">
     <div class="card">
-      <h2>트래킹</h2>
+      <h2>캡처 / 트래킹</h2>
       <label class="toggle">
         <input type="checkbox" id="tracking-toggle" />
         <span>객체 트래킹 (track_id 부여, motion_gate 사용 시 필수)</span>
       </label>
+      <div class="field" style="margin-top:12px;">
+        <label>캡처 FPS: <span id="fps-val">5</span> (1~30)</label>
+        <input type="range" id="fps-slider" min="1" max="30" step="1" value="5" />
+      </div>
     </div>
 
     <div class="card">
@@ -545,6 +549,22 @@ async function loadTracking() {
     q("#tracking-toggle").checked = !!t.enabled;
   } catch (e) {}
 }
+async function loadFps() {
+  try {
+    const f = await fetch("/fps").then(r => r.json());
+    q("#fps-slider").value = f.fps;
+    q("#fps-val").textContent = f.fps;
+  } catch (e) {}
+}
+q("#fps-slider").addEventListener("input", (e) => {
+  q("#fps-val").textContent = e.target.value;
+});
+q("#fps-slider").addEventListener("change", async (e) => {
+  await fetch("/fps", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({fps: parseInt(e.target.value)}),
+  });
+});
 async function loadClasses() {
   try {
     const c = await fetch("/classes").then(r => r.json());
@@ -579,7 +599,7 @@ async function poll() {
 }
 
 setInterval(poll, 500); poll();
-loadFrameSize(); loadTracking(); loadClasses(); loadRules();
+loadFrameSize(); loadTracking(); loadFps(); loadClasses(); loadRules();
 </script>
 </body>
 </html>

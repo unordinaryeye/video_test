@@ -41,7 +41,6 @@ class FrameCapture:
 
     def _capture_loop(self):
         source = self._create_source()
-        interval = 1.0 / self._config.fps
 
         try:
             while self._running:
@@ -63,9 +62,11 @@ class FrameCapture:
                 self._queue.put(frame_data)
 
                 if self._frame_count % 10 == 0:
-                    logger.info(f"캡처 중... frame_id={self._frame_count}")
+                    logger.info(f"캡처 중... frame_id={self._frame_count} fps={self._config.fps}")
 
-                time.sleep(interval)
+                # fps는 매 루프에서 재평가 (런타임 변경 반영)
+                fps = max(self._config.fps, 1)
+                time.sleep(1.0 / fps)
         finally:
             source.release()
 
