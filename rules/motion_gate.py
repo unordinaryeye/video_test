@@ -14,7 +14,7 @@ from rules.loader import MotionGate as MotionGateConfig
 class _TrackHistory:
     """단일 track의 위치 히스토리."""
     positions: Deque[Tuple[float, float, float]] = field(
-        default_factory=lambda: deque(maxlen=500)
+        default_factory=lambda: deque(maxlen=5000)
     )
     # 각 항목: (x, y, timestamp_seconds)
 
@@ -40,17 +40,9 @@ class MotionGateState:
     ) -> List[int]:
         """위치 히스토리를 갱신하고 idle로 판정된 track_id 목록을 반환한다.
 
-        Args:
-            detections: detection dict 목록.
-            now: 현재 시각 (None이면 datetime.utcnow() 사용).
-
-        Returns:
-            idle로 판정된 track_id 목록.
-            enabled=False이면 항상 빈 리스트.
-
-        Note:
-            idle 판정 로직은 아직 구현되지 않았습니다 (TODO).
-            현재는 위치 기록만 수행합니다.
+        idle 조건 (둘 다 충족 시):
+          - idle_seconds 동안 연속 관측됨 (window 내 첫/마지막 시간차 >= idle_seconds)
+          - window 내 위치들의 bounding box 대각선 < movement_threshold_px
         """
         if not self._config.enabled:
             return []
@@ -73,9 +65,29 @@ class MotionGateState:
                 self._tracks[track_id] = _TrackHistory()
             self._tracks[track_id].positions.append((cx, cy, ts))
 
-        # TODO: idle 판정 구현
-        # idle 조건: idle_seconds 동안 movement_threshold_px 이내로만 움직인 track
+        cutoff = ts - self._config.idle_seconds
         idle_ids: List[int] = []
+
+        for track_id, hist in self._tracks.items():
+            while hist.positions and hist.positions[0][2] < cutoff:
+                hist.positions.popleft()
+
+            if len(hist.positions) < 2:
+                continue
+
+            span = hist.positions[-1][2] - hist.positions[0][2]
+            if span < self._config.idle_seconds:
+                continue
+
+            xs = [p[0] for p in hist.positions]
+            ys = [p[1] for p in hist.positions]
+            dx = max(xs) - min(xs)
+            dy = max(ys) - min(ys)
+            displacement = (dx * dx + dy * dy) ** 0.5
+
+            if displacement < self._config.movement_threshold_px:
+                idle_ids.append(track_id)
+
         return idle_ids
 
     def filter(
