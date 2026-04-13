@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>실시간 영상 추론 파이프라인</title>
+<style>
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:#0f172a; color:#e2e8f0; }
+  header { padding:16px 24px; background:#1e293b; border-bottom:1px solid #334155; }
+  header h1 { margin:0; font-size:18px; font-weight:600; }
+  header p { margin:4px 0 0; font-size:13px; color:#94a3b8; }
+  .container { display:flex; gap:16px; padding:16px; max-width:1700px; margin:0 auto; align-items:flex-start; }
+  .left { flex: 1 1 55%; min-width: 0; }
+  .right { flex: 1 1 45%; min-width: 400px; display:flex; flex-direction:column; gap:16px; }
+  .card { background:#1e293b; border-radius:8px; padding:16px; border:1px solid #334155; }
+  .card h2 { margin:0 0 12px; font-size:14px; color:#94a3b8; font-weight:500;
+             display:flex; justify-content:space-between; align-items:center; }
+  .video-wrap { position:relative; display:inline-block; width:100%; background:#0f172a; border-radius:6px; overflow:hidden; }
+  .video-wrap img { display:block; width:100%; }
+  .video-wrap canvas { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; }
+  .video-wrap canvas.inactive { pointer-events:none; cursor:default; }
+  .legend { margin-top:8px; font-size:12px; color:#94a3b8; display:flex; gap:16px; flex-wrap:wrap; }
+  .legend i { display:inline-block; width:10px; height:10px; margin-right:4px; vertical-align:middle; border-radius:2px; }
+  .stat { display:flex; justify-content:space-between; margin:6px 0; padding:6px 0;
+          border-bottom:1px solid #334155; font-size:13px; }
+  .stat:last-child { border-bottom:none; }
+  .stat-label { color:#94a3b8; }
+  .stat-value { color:#22d3ee; font-weight:600; font-family:ui-monospace,monospace; }
+  .log { font-family:ui-monospace,monospace; font-size:12px; max-height:180px; overflow-y:auto;
+         background:#0f172a; padding:10px; border-radius:6px; border:1px solid #334155; }
+  .log-entry { margin:3px 0; color:#cbd5e1; }
+  button { background:#22d3ee; color:#0f172a; border:0; padding:7px 12px; border-radius:6px;
+           font-weight:600; cursor:pointer; font-size:12px; }
+  button:hover { background:#67e8f9; }
+  button.secondary { background:#334155; color:#e2e8f0; }
+  button.secondary:hover { background:#475569; }
+  button.danger { background:#ef4444; color:#fff; }
+  button.danger:hover { background:#dc2626; }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .field label { font-size:12px; color:#94a3b8; }
+  .field input[type=text], .field input[type=number], .field select {
+    background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:5px;
+    padding:6px 8px; font-size:13px; }
+  .field input[type=range] { width:100%; }
+  .toggle { display:inline-flex; gap:8px; align-items:center; cursor:pointer; user-select:none; font-size:13px; }
+  .toggle input { width:16px; height:16px; }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; background:#0f172a; padding:6px;
+           border:1px solid #334155; border-radius:5px; min-height:28px; }
+  .chip { background:#334155; color:#e2e8f0; padding:2px 8px; border-radius:4px; font-size:12px;
+          display:inline-flex; gap:4px; align-items:center; }
+  .chip .x { cursor:pointer; color:#94a3b8; }
+  .chip .x:hover { color:#ef4444; }
+  .chip-input { background:transparent; border:0; color:#e2e8f0; flex:1; min-width:80px; outline:0; font-size:12px; }
+  .zone-item { background:#0f172a; border:1px solid #334155; border-radius:6px; padding:10px; margin-bottom:8px; }
+  .zone-header { display:flex; justify-content:space-between; align-items:center; }
+  .rule-item { background:#1e293b; border:1px solid #334155; border-radius:5px; padding:8px; margin-top:6px; }
+  .msg { font-size:12px; margin-top:6px; min-height:16px; }
+  .msg.ok { color:#22c55e; } .msg.err { color:#ef4444; }
+  .classes-list { font-family:ui-monospace,monospace; font-size:11px; color:#94a3b8;
+                  max-height:100px; overflow-y:auto; background:#0f172a; padding:8px;
+                  border-radius:5px; border:1px solid #334155; margin-top:6px; }
+  details summary { cursor:pointer; font-size:12px; color:#94a3b8; }
+  textarea { width:100%; min-height:180px; box-sizing:border-box; background:#0f172a;
+             color:#e2e8f0; border:1px solid #334155; border-radius:5px; padding:8px;
+             font-family:ui-monospace,monospace; font-size:12px; resize:vertical; }
+  .tab-bar { display:flex; gap:4px; margin-bottom:10px; }
+  .tab-bar button { background:transparent; color:#94a3b8; border-bottom:2px solid transparent;
+                    border-radius:0; padding:6px 10px; font-weight:500; }
+  .tab-bar button.active { color:#22d3ee; border-bottom-color:#22d3ee; }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>실시간 영상 추론 파이프라인</h1>
+  <p>Capture → Inference (YOLOv8) → Sink | Phase C: 룰 관리 UI</p>
+</header>
+
+<div class="container">
+  <div class="left">
+    <div class="card">
+      <h2>실시간 영상
+        <span>
+          <button id="draw-start" class="secondary">+ Zone 그리기</button>
+          <button id="draw-finish" disabled>완료</button>
+          <button id="draw-cancel" class="secondary" disabled>취소</button>
+        </span>
+      </h2>
+      <div class="video-wrap" id="video-wrap">
+        <img id="video" src="/stream" alt="video stream" />
+        <canvas id="overlay" class="inactive"></canvas>
+      </div>
+      <div class="legend">
+        <span><i style="background:#22d3ee;"></i>통과 detection</span>
+        <span><i style="background:#ef4444;"></i>Zone 이벤트</span>
+        <span><i style="border:2px solid #94a3b8;background:transparent;"></i>비활성 Zone</span>
+        <span><i style="border:2px solid #ef4444;background:rgba(239,68,68,0.2);"></i>활성 Zone</span>
+        <span id="draw-status" style="color:#22d3ee;"></span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h2>통계</h2>
+      <div class="stat"><span class="stat-label">처리 프레임</span><span class="stat-value" id="frame-count">0</span></div>
+      <div class="stat"><span class="stat-label">최근 감지 수</span><span class="stat-value" id="detect-count">0</span></div>
+      <div class="stat"><span class="stat-label">Zone 이벤트</span><span class="stat-value" id="event-count">0</span></div>
+      <div class="stat"><span class="stat-label">추론 지연 (ms)</span><span class="stat-value" id="latency">0</span></div>
+      <div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="fps">0</span></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h2>최근 감지 로그</h2>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="card">
+      <h2>트래킹</h2>
+      <label class="toggle">
+        <input type="checkbox" id="tracking-toggle" />
+        <span>객체 트래킹 (track_id 부여, motion_gate 사용 시 필수)</span>
+      </label>
+    </div>
+
+    <div class="card">
+      <h2>룰 관리
+        <span>
+          <button id="save-btn">저장 + 적용</button>
+          <button id="reload-btn" class="secondary">파일 리로드</button>
+        </span>
+      </h2>
+      <div class="msg" id="save-msg"></div>
+
+      <div class="tab-bar">
+        <button data-tab="form" class="active">폼 편집</button>
+        <button data-tab="yaml">Raw YAML</button>
+      </div>
+
+      <div id="tab-form" class="tab-panel active">
+        <h3 style="font-size:13px;color:#22d3ee;margin:4px 0 8px;">Detection 필터</h3>
+        <div class="field">
+          <label>탐지 클래스 (빈 목록 = 전체 통과)</label>
+          <div class="chips" id="det-classes">
+            <input class="chip-input" id="det-classes-input" placeholder="클래스 입력 후 Enter" list="classes-datalist" />
+          </div>
+          <datalist id="classes-datalist"></datalist>
+        </div>
+        <div class="field">
+          <label>최소 신뢰도: <span id="det-conf-val">0.5</span></label>
+          <input type="range" id="det-conf" min="0" max="1" step="0.05" value="0.5" />
+        </div>
+
+        <h3 style="font-size:13px;color:#22d3ee;margin:16px 0 8px;">Zones</h3>
+        <div id="zones-list"></div>
+
+        <h3 style="font-size:13px;color:#22d3ee;margin:16px 0 8px;">Motion Gate (트래킹 필요)</h3>
+        <label class="toggle"><input type="checkbox" id="mg-enabled" /><span>활성화</span></label>
+        <div class="field" style="margin-top:8px;">
+          <label>정지 판정 시간 (초)</label>
+          <input type="number" id="mg-idle" min="1" value="180" />
+        </div>
+        <div class="field">
+          <label>움직임 임계값 (px)</label>
+          <input type="number" id="mg-thr" min="0" value="20" />
+        </div>
+        <div class="field">
+          <label>대상 클래스</label>
+          <div class="chips" id="mg-classes">
+            <input class="chip-input" id="mg-classes-input" placeholder="클래스 입력 후 Enter" list="classes-datalist" />
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-yaml" class="tab-panel">
+        <textarea id="yaml-text" spellcheck="false"></textarea>
+        <div class="row"><button id="yaml-save-btn">YAML로 저장 + 적용</button></div>
+      </div>
+
+      <details style="margin-top:12px;">
+        <summary>지원 클래스 목록 (모델 서버)</summary>
+        <div class="classes-list" id="classes-display">불러오는 중...</div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- state ----------
+const state = {
+  detection: {classes: [], min_confidence: 0.5},
+  zones: [],
+  motion_gate: {enabled: false, idle_seconds: 180, movement_threshold_px: 20, classes: []},
+  drawing: {active: false, points: []},
+  availableClasses: [],
+  frameSize: {width: 640, height: 480},
+};
+
+// ---------- utility ----------
+function q(s) { return document.querySelector(s); }
+function qq(s) { return document.querySelectorAll(s); }
+
+function yamlEscape(s) {
+  // quote if contains special chars or is empty
+  if (s === "" || /[:#\-\[\]\{\},&*!|>'"%@`]/.test(s) || /^\s|\s$/.test(s)) {
+    return '"' + s.replace(/"/g, '\\"') + '"';
+  }
+  return s;
+}
+
+function toYaml(st) {
+  const lines = [];
+  lines.push("detection:");
+  const cls = st.detection.classes.map(yamlEscape).join(", ");
+  lines.push(`  classes: [${cls}]`);
+  lines.push(`  min_confidence: ${st.detection.min_confidence}`);
+  lines.push("");
+  lines.push("zones:");
+  if (st.zones.length === 0) lines.push("  []");
+  for (const z of st.zones) {
+    lines.push(`  - name: ${yamlEscape(z.name)}`);
+    const poly = z.polygon.map(p => `[${p[0]},${p[1]}]`).join(", ");
+    lines.push(`    polygon: [${poly}]`);
+    lines.push(`    rules:`);
+    if (z.rules.length === 0) lines.push(`      []`);
+    for (const r of z.rules) {
+      lines.push(`      - type: ${r.type}`);
+      if (r.classes && r.classes.length > 0) {
+        lines.push(`        classes: [${r.classes.map(yamlEscape).join(", ")}]`);
+      }
+      if (r.type === "count_exceeds") {
+        lines.push(`        threshold: ${r.threshold || 1}`);
+      }
+    }
+  }
+  lines.push("");
+  lines.push("motion_gate:");
+  lines.push(`  enabled: ${st.motion_gate.enabled}`);
+  lines.push(`  idle_seconds: ${st.motion_gate.idle_seconds}`);
+  lines.push(`  movement_threshold_px: ${st.motion_gate.movement_threshold_px}`);
+  const mgc = st.motion_gate.classes.map(yamlEscape).join(", ");
+  lines.push(`  classes: [${mgc}]`);
+  return lines.join("\n");
+}
+
+// ---------- chips ----------
+function renderChips(containerId, arr, onChange) {
+  const el = q("#" + containerId);
+  // Remove all chips except input
+  [...el.querySelectorAll(".chip")].forEach(c => c.remove());
+  const input = el.querySelector(".chip-input");
+  arr.forEach((v, i) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = `${v}<span class="x" data-i="${i}">×</span>`;
+    chip.querySelector(".x").onclick = () => { arr.splice(i, 1); onChange(); };
+    el.insertBefore(chip, input);
+  });
+}
+
+function wireChipInput(inputId, arr, onChange) {
+  q("#" + inputId).addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      const v = e.target.value.trim();
+      if (v && !arr.includes(v)) { arr.push(v); onChange(); }
+      e.target.value = "";
+    } else if (e.key === "Backspace" && !e.target.value && arr.length > 0) {
+      arr.pop(); onChange();
+    }
+  });
+}
+
+// ---------- zones editor ----------
+function renderZones() {
+  const root = q("#zones-list");
+  root.innerHTML = "";
+  state.zones.forEach((z, zi) => {
+    const item = document.createElement("div");
+    item.className = "zone-item";
+    item.innerHTML = `
+      <div class="zone-header">
+        <strong>${z.name || "(이름 없음)"}</strong>
+        <span>
+          <button class="secondary" data-act="redraw">다시 그리기</button>
+          <button class="danger" data-act="delete">삭제</button>
+        </span>
+      </div>
+      <div class="field" style="margin-top:8px;"><label>이름</label>
+        <input type="text" class="zname" value="${z.name}" />
+      </div>
+      <div style="font-size:11px;color:#94a3b8;">
+        Polygon: ${z.polygon.length}점 — ${z.polygon.map(p => `(${p[0]},${p[1]})`).join(", ")}
+      </div>
+      <div class="field" style="margin-top:8px;"><label>Rules</label></div>
+      <div class="rules-root"></div>
+      <div class="row"><button class="secondary add-rule">+ Rule 추가</button></div>
+    `;
+    item.querySelector(".zname").addEventListener("input", (e) => {
+      z.name = e.target.value;
+    });
+    item.querySelector('[data-act="delete"]').onclick = () => {
+      state.zones.splice(zi, 1); renderZones();
+    };
+    item.querySelector('[data-act="redraw"]').onclick = () => {
+      startDrawing(zi);
+    };
+    item.querySelector(".add-rule").onclick = () => {
+      z.rules.push({type: "entry", classes: [], threshold: 1});
+      renderZones();
+    };
+    const rulesRoot = item.querySelector(".rules-root");
+    z.rules.forEach((r, ri) => {
+      const re = document.createElement("div");
+      re.className = "rule-item";
+      re.innerHTML = `
+        <div class="row">
+          <select class="rtype">
+            <option value="entry">entry (구역 진입)</option>
+            <option value="count_exceeds">count_exceeds (초과 인원)</option>
+          </select>
+          <input type="number" class="rthr" min="1" value="${r.threshold || 1}" style="width:60px;"
+                 placeholder="threshold" />
+          <button class="danger rdel">제거</button>
+        </div>
+        <div class="field" style="margin-top:6px;"><label>대상 클래스 (생략=전체)</label>
+          <div class="chips rclasses"><input class="chip-input" placeholder="Enter" list="classes-datalist" /></div>
+        </div>
+      `;
+      re.querySelector(".rtype").value = r.type;
+      re.querySelector(".rtype").onchange = (e) => { r.type = e.target.value; };
+      re.querySelector(".rthr").oninput = (e) => { r.threshold = parseInt(e.target.value) || 1; };
+      re.querySelector(".rdel").onclick = () => { z.rules.splice(ri, 1); renderZones(); };
+      // chips for rule classes
+      const chipsEl = re.querySelector(".rclasses");
+      const input = chipsEl.querySelector(".chip-input");
+      function rerenderRuleChips() {
+        [...chipsEl.querySelectorAll(".chip")].forEach(c => c.remove());
+        r.classes.forEach((v, i) => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.innerHTML = `${v}<span class="x">×</span>`;
+          chip.querySelector(".x").onclick = () => { r.classes.splice(i, 1); rerenderRuleChips(); };
+          chipsEl.insertBefore(chip, input);
+        });
+      }
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === ",") {
+          e.preventDefault();
+          const v = e.target.value.trim();
+          if (v && !r.classes.includes(v)) { r.classes.push(v); rerenderRuleChips(); }
+          e.target.value = "";
+        } else if (e.key === "Backspace" && !e.target.value && r.classes.length > 0) {
+          r.classes.pop(); rerenderRuleChips();
+        }
+      });
+      rerenderRuleChips();
+      rulesRoot.appendChild(re);
+    });
+    root.appendChild(item);
+  });
+}
+
+// ---------- drawing ----------
+const canvas = q("#overlay");
+const ctx = canvas.getContext("2d");
+let redrawTargetZone = null;
+
+function resizeCanvas() {
+  const img = q("#video");
+  canvas.width = img.clientWidth;
+  canvas.height = img.clientHeight;
+  drawPreview();
+}
+window.addEventListener("resize", resizeCanvas);
+q("#video").addEventListener("load", resizeCanvas);
+
+function canvasToFrame(cx, cy) {
+  const fw = state.frameSize.width, fh = state.frameSize.height;
+  return [Math.round(cx / canvas.width * fw), Math.round(cy / canvas.height * fh)];
+}
+function frameToCanvas(fx, fy) {
+  const fw = state.frameSize.width, fh = state.frameSize.height;
+  return [fx / fw * canvas.width, fy / fh * canvas.height];
+}
+
+function drawPreview() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!state.drawing.active) return;
+  const pts = state.drawing.points;
+  ctx.strokeStyle = "#22d3ee";
+  ctx.fillStyle = "rgba(34,211,238,0.15)";
+  ctx.lineWidth = 2;
+  if (pts.length > 0) {
+    ctx.beginPath();
+    pts.forEach(([fx, fy], i) => {
+      const [cx, cy] = frameToCanvas(fx, fy);
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    });
+    if (pts.length >= 3) { ctx.closePath(); ctx.fill(); }
+    ctx.stroke();
+    pts.forEach(([fx, fy]) => {
+      const [cx, cy] = frameToCanvas(fx, fy);
+      ctx.fillStyle = "#22d3ee";
+      ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+}
+
+canvas.addEventListener("click", (e) => {
+  if (!state.drawing.active) return;
+  const rect = canvas.getBoundingClientRect();
+  const [fx, fy] = canvasToFrame(e.clientX - rect.left, e.clientY - rect.top);
+  state.drawing.points.push([fx, fy]);
+  q("#draw-status").textContent = `${state.drawing.points.length}점 (최소 3점 후 완료)`;
+  q("#draw-finish").disabled = state.drawing.points.length < 3;
+  drawPreview();
+});
+
+function startDrawing(existingIdx = null) {
+  state.drawing.active = true;
+  state.drawing.points = [];
+  redrawTargetZone = existingIdx;
+  canvas.classList.remove("inactive");
+  q("#draw-start").disabled = true;
+  q("#draw-finish").disabled = true;
+  q("#draw-cancel").disabled = false;
+  q("#draw-status").textContent = "클릭으로 꼭짓점 추가";
+  drawPreview();
+}
+function stopDrawing() {
+  state.drawing.active = false;
+  canvas.classList.add("inactive");
+  q("#draw-start").disabled = false;
+  q("#draw-finish").disabled = true;
+  q("#draw-cancel").disabled = true;
+  q("#draw-status").textContent = "";
+  drawPreview();
+}
+q("#draw-start").onclick = () => startDrawing();
+q("#draw-cancel").onclick = () => stopDrawing();
+q("#draw-finish").onclick = () => {
+  if (state.drawing.points.length < 3) return;
+  const pts = state.drawing.points.slice();
+  if (redrawTargetZone !== null) {
+    state.zones[redrawTargetZone].polygon = pts;
+  } else {
+    const name = prompt("Zone 이름?", `zone_${state.zones.length + 1}`);
+    if (name) state.zones.push({name, polygon: pts, rules: [{type: "entry", classes: [], threshold: 1}]});
+  }
+  stopDrawing(); renderZones();
+};
+
+// ---------- state -> UI ----------
+function applyStateToForm() {
+  renderChips("det-classes", state.detection.classes, () =>
+    renderChips("det-classes", state.detection.classes, () => {}));
+  q("#det-conf").value = state.detection.min_confidence;
+  q("#det-conf-val").textContent = state.detection.min_confidence;
+  q("#mg-enabled").checked = state.motion_gate.enabled;
+  q("#mg-idle").value = state.motion_gate.idle_seconds;
+  q("#mg-thr").value = state.motion_gate.movement_threshold_px;
+  renderChips("mg-classes", state.motion_gate.classes, () =>
+    renderChips("mg-classes", state.motion_gate.classes, () => {}));
+  renderZones();
+  q("#yaml-text").value = toYaml(state);
+}
+
+// Detection bindings
+q("#det-conf").addEventListener("input", (e) => {
+  state.detection.min_confidence = parseFloat(e.target.value);
+  q("#det-conf-val").textContent = state.detection.min_confidence;
+});
+wireChipInput("det-classes-input", state.detection.classes, () =>
+  renderChips("det-classes", state.detection.classes, () => {}));
+wireChipInput("mg-classes-input", state.motion_gate.classes, () =>
+  renderChips("mg-classes", state.motion_gate.classes, () => {}));
+
+q("#mg-enabled").addEventListener("change", (e) => { state.motion_gate.enabled = e.target.checked; });
+q("#mg-idle").addEventListener("input", (e) => { state.motion_gate.idle_seconds = parseFloat(e.target.value) || 0; });
+q("#mg-thr").addEventListener("input", (e) => { state.motion_gate.movement_threshold_px = parseFloat(e.target.value) || 0; });
+
+// Tabs
+qq(".tab-bar button").forEach(b => b.onclick = () => {
+  qq(".tab-bar button").forEach(x => x.classList.remove("active"));
+  qq(".tab-panel").forEach(x => x.classList.remove("active"));
+  b.classList.add("active");
+  q("#tab-" + b.dataset.tab).classList.add("active");
+  if (b.dataset.tab === "yaml") q("#yaml-text").value = toYaml(state);
+});
+
+// Save / Reload
+async function saveYaml(yaml) {
+  const msg = q("#save-msg");
+  msg.textContent = "저장 중..."; msg.className = "msg";
+  try {
+    const res = await fetch("/rules", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({yaml}),
+    });
+    if (res.ok) { msg.textContent = "✓ 적용됨"; msg.className = "msg ok"; }
+    else {
+      const err = await res.json();
+      msg.textContent = "오류: " + (err.detail || res.status);
+      msg.className = "msg err";
+    }
+  } catch (e) { msg.textContent = "오류: " + e.message; msg.className = "msg err"; }
+}
+q("#save-btn").onclick = () => saveYaml(toYaml(state));
+q("#yaml-save-btn").onclick = () => saveYaml(q("#yaml-text").value);
+q("#reload-btn").onclick = async () => {
+  await fetch("/rules/reload", {method: "POST"});
+  await loadRules();
+};
+
+// Tracking
+q("#tracking-toggle").addEventListener("change", async (e) => {
+  await fetch("/tracking", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({enabled: e.target.checked}),
+  });
+});
+
+// Initial loads
+async function loadRules() {
+  const r = await fetch("/rules").then(r => r.json());
+  const p = r.parsed || {};
+  state.detection.classes = (p.detection && p.detection.classes) || [];
+  state.detection.min_confidence = (p.detection && p.detection.min_confidence) || 0.0;
+  state.zones = (p.zones || []).map(z => ({
+    name: z.name, polygon: z.polygon,
+    rules: (z.rules || []).map(r => ({type: r.type, classes: r.classes || [], threshold: r.threshold || 1})),
+  }));
+  state.motion_gate = Object.assign({enabled:false,idle_seconds:180,movement_threshold_px:20,classes:[]},
+                                    p.motion_gate || {});
+  applyStateToForm();
+}
+async function loadTracking() {
+  try {
+    const t = await fetch("/tracking").then(r => r.json());
+    q("#tracking-toggle").checked = !!t.enabled;
+  } catch (e) {}
+}
+async function loadClasses() {
+  try {
+    const c = await fetch("/classes").then(r => r.json());
+    state.availableClasses = c.classes || [];
+    q("#classes-display").textContent = state.availableClasses.join(", ") || "(없음)";
+    const dl = q("#classes-datalist");
+    dl.innerHTML = state.availableClasses.map(x => `<option value="${x}">`).join("");
+  } catch (e) {
+    q("#classes-display").textContent = "(모델 서버 응답 없음)";
+  }
+}
+async function loadFrameSize() {
+  try {
+    const f = await fetch("/frame_size").then(r => r.json());
+    state.frameSize = f;
+  } catch (e) {}
+  resizeCanvas();
+}
+
+// Poll stats
+async function poll() {
+  try {
+    const res = await fetch("/stats");
+    const d = await res.json();
+    q("#frame-count").textContent = d.frame_count;
+    q("#detect-count").textContent = d.last_detections;
+    q("#event-count").textContent = d.last_events;
+    q("#latency").textContent = d.last_latency_ms;
+    q("#fps").textContent = d.fps.toFixed(1);
+    q("#log").innerHTML = d.log.map(e => `<div class="log-entry">${e}</div>`).join("");
+  } catch (e) {}
+}
+
+setInterval(poll, 500); poll();
+loadFrameSize(); loadTracking(); loadClasses(); loadRules();
+</script>
+</body>
+</html>

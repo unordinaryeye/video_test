@@ -42,241 +42,49 @@ _FONT = _load_font(14)
 _FONT_SMALL = _load_font(12)
 
 
-HTML_PAGE = """<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <title>실시간 영상 추론 파이프라인</title>
-  <style>
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-           background: #0f172a; color: #e2e8f0; }
-    header { padding: 16px 24px; background: #1e293b; border-bottom: 1px solid #334155; }
-    header h1 { margin: 0; font-size: 18px; font-weight: 600; }
-    header p { margin: 4px 0 0; font-size: 13px; color: #94a3b8; }
-    .container { display: flex; gap: 16px; padding: 16px; max-width: 1600px; margin: 0 auto; }
-    .video-box { flex: 2; background: #1e293b; border-radius: 8px; padding: 16px;
-                 border: 1px solid #334155; }
-    .video-box h2 { margin: 0 0 12px; font-size: 14px; color: #94a3b8; font-weight: 500; }
-    .video-box img { width: 100%; border-radius: 6px; background: #0f172a; }
-    .sidebar { flex: 1; display: flex; flex-direction: column; gap: 16px; min-width: 360px; }
-    .card { background: #1e293b; border-radius: 8px; padding: 16px;
-            border: 1px solid #334155; }
-    .card h2 { margin: 0 0 12px; font-size: 14px; color: #94a3b8; font-weight: 500;
-               display: flex; justify-content: space-between; align-items: center; }
-    .stat { display: flex; justify-content: space-between; margin: 8px 0;
-            padding: 8px 0; border-bottom: 1px solid #334155; font-size: 14px; }
-    .stat:last-child { border-bottom: none; }
-    .stat-label { color: #94a3b8; }
-    .stat-value { color: #22d3ee; font-weight: 600; font-family: ui-monospace, monospace; }
-    .log { font-family: ui-monospace, monospace; font-size: 12px;
-           max-height: 240px; overflow-y: auto; background: #0f172a;
-           padding: 12px; border-radius: 6px; border: 1px solid #334155; }
-    .log-entry { margin: 4px 0; color: #cbd5e1; }
-    .pipeline { display: flex; align-items: center; justify-content: space-between;
-                margin-top: 8px; }
-    .stage { flex: 1; text-align: center; padding: 12px 8px; background: #0f172a;
-             border-radius: 6px; border: 1px solid #334155; }
-    .stage-name { font-size: 12px; color: #94a3b8; }
-    .stage-status { font-size: 16px; margin-top: 4px; }
-    .arrow { color: #475569; margin: 0 8px; }
-    .active { border-color: #22d3ee; }
-    .active .stage-status { color: #22d3ee; }
-    textarea { width: 100%; min-height: 240px; box-sizing: border-box; background: #0f172a;
-               color: #e2e8f0; border: 1px solid #334155; border-radius: 6px;
-               padding: 10px; font-family: ui-monospace, monospace; font-size: 12px;
-               resize: vertical; }
-    button { background: #22d3ee; color: #0f172a; border: 0; padding: 8px 14px;
-             border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; }
-    button:hover { background: #67e8f9; }
-    button.secondary { background: #334155; color: #e2e8f0; }
-    button.secondary:hover { background: #475569; }
-    .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
-    .toggle { display: inline-flex; gap: 8px; align-items: center; cursor: pointer;
-              user-select: none; font-size: 13px; }
-    .toggle input { width: 16px; height: 16px; cursor: pointer; }
-    .msg { font-size: 12px; margin-top: 8px; min-height: 16px; }
-    .msg.ok { color: #22c55e; }
-    .msg.err { color: #ef4444; }
-    details { margin-top: 10px; }
-    details summary { cursor: pointer; font-size: 12px; color: #94a3b8; }
-    .classes { font-family: ui-monospace, monospace; font-size: 11px; color: #94a3b8;
-               max-height: 120px; overflow-y: auto; background: #0f172a; padding: 8px;
-               border-radius: 6px; border: 1px solid #334155; margin-top: 6px; }
-    .disabled-card { opacity: 0.5; pointer-events: none; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>실시간 영상 추론 파이프라인</h1>
-    <p>Capture → Inference (YOLOv8) → Sink | 프로토타입 데모</p>
-  </header>
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-  <div class="container">
-    <div class="video-box">
-      <h2>실시간 영상 + 감지 결과</h2>
-      <img src="/stream" alt="video stream" />
-      <div style="margin-top:8px; font-size:12px; color:#94a3b8; display:flex; gap:16px; flex-wrap:wrap;">
-        <span><span style="display:inline-block;width:10px;height:10px;background:#22d3ee;border-radius:2px;"></span> 통과 detection</span>
-        <span><span style="display:inline-block;width:10px;height:10px;background:#ef4444;border-radius:2px;"></span> Zone 이벤트 발생</span>
-        <span><span style="display:inline-block;width:10px;height:10px;border:2px solid #94a3b8;"></span> 비활성 Zone</span>
-        <span><span style="display:inline-block;width:10px;height:10px;border:2px solid #ef4444;background:rgba(239,68,68,0.2);"></span> 활성 Zone</span>
-      </div>
-    </div>
 
-    <div class="sidebar">
-      <div class="card">
-        <h2>파이프라인 상태</h2>
-        <div class="pipeline">
-          <div class="stage active">
-            <div class="stage-name">Capture</div>
-            <div class="stage-status">●</div>
-          </div>
-          <span class="arrow">→</span>
-          <div class="stage active">
-            <div class="stage-name">Inference</div>
-            <div class="stage-status">●</div>
-          </div>
-          <span class="arrow">→</span>
-          <div class="stage active">
-            <div class="stage-name">Sink</div>
-            <div class="stage-status">●</div>
-          </div>
-        </div>
-      </div>
+def _load_html() -> str:
+    with open(os.path.join(_STATIC_DIR, "index.html"), "r", encoding="utf-8") as f:
+        return f.read()
 
-      <div class="card">
-        <h2>통계</h2>
-        <div class="stat">
-          <span class="stat-label">처리 프레임</span>
-          <span class="stat-value" id="frame-count">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">최근 감지 수</span>
-          <span class="stat-value" id="detect-count">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Zone 이벤트</span>
-          <span class="stat-value" id="event-count">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">추론 지연 (ms)</span>
-          <span class="stat-value" id="latency">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">FPS</span>
-          <span class="stat-value" id="fps">0</span>
-        </div>
-      </div>
 
-      <div class="card" id="admin-card">
-        <h2>관리 (실시간 반영)</h2>
-        <label class="toggle">
-          <input type="checkbox" id="tracking-toggle" />
-          <span>객체 트래킹 (track_id 부여)</span>
-        </label>
-        <div class="row">
-          <strong style="font-size:13px;">YAML 룰</strong>
-          <button class="secondary" id="reload-btn" type="button">파일 리로드</button>
-        </div>
-        <textarea id="yaml-text" spellcheck="false" placeholder="--rules 플래그로 YAML 경로를 지정하세요"></textarea>
-        <div class="row">
-          <button id="save-btn" type="button">저장 + 적용</button>
-          <span class="msg" id="save-msg"></span>
-        </div>
-        <details>
-          <summary>지원 클래스 목록 (모델 서버)</summary>
-          <div class="classes" id="classes">불러오는 중...</div>
-        </details>
-      </div>
-
-      <div class="card">
-        <h2>최근 감지 로그</h2>
-        <div class="log" id="log"></div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    async function poll() {
-      try {
-        const res = await fetch("/stats");
-        const data = await res.json();
-        document.getElementById("frame-count").textContent = data.frame_count;
-        document.getElementById("detect-count").textContent = data.last_detections;
-        document.getElementById("event-count").textContent = data.last_events;
-        document.getElementById("latency").textContent = data.last_latency_ms;
-        document.getElementById("fps").textContent = data.fps.toFixed(1);
-
-        const log = document.getElementById("log");
-        log.innerHTML = data.log.map(e =>
-          '<div class="log-entry">' + e + '</div>'
-        ).join("");
-      } catch (e) { console.error(e); }
+def _empty_parsed() -> dict:
+    return {
+        "detection": {"classes": [], "min_confidence": 0.0},
+        "zones": [],
+        "motion_gate": {
+            "enabled": False, "idle_seconds": 180.0,
+            "movement_threshold_px": 20.0, "classes": [],
+        },
     }
 
-    async function loadAdmin() {
-      try {
-        const t = await fetch("/tracking").then(r => r.json());
-        document.getElementById("tracking-toggle").checked = !!t.enabled;
-      } catch (e) {}
-      try {
-        const r = await fetch("/rules").then(r => r.json());
-        document.getElementById("yaml-text").value = r.yaml || "";
-      } catch (e) {}
-      try {
-        const c = await fetch("/classes").then(r => r.json());
-        document.getElementById("classes").textContent = (c.classes || []).join(", ");
-      } catch (e) {
-        document.getElementById("classes").textContent = "(모델 서버 응답 없음)";
-      }
+
+def _rules_to_dict(rules) -> dict:
+    return {
+        "detection": {
+            "classes": list(rules.detection.classes),
+            "min_confidence": rules.detection.min_confidence,
+        },
+        "zones": [
+            {
+                "name": z.name,
+                "polygon": [list(p) for p in z.polygon],
+                "rules": [
+                    {"type": r.type, "classes": list(r.classes), "threshold": r.threshold}
+                    for r in z.rules
+                ],
+            }
+            for z in rules.zones
+        ],
+        "motion_gate": {
+            "enabled": rules.motion_gate.enabled,
+            "idle_seconds": rules.motion_gate.idle_seconds,
+            "movement_threshold_px": rules.motion_gate.movement_threshold_px,
+            "classes": list(rules.motion_gate.classes),
+        },
     }
-
-    document.getElementById("tracking-toggle").addEventListener("change", async (e) => {
-      await fetch("/tracking", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({enabled: e.target.checked}),
-      });
-    });
-
-    document.getElementById("save-btn").addEventListener("click", async () => {
-      const msg = document.getElementById("save-msg");
-      msg.textContent = "저장 중...";
-      msg.className = "msg";
-      const yaml = document.getElementById("yaml-text").value;
-      try {
-        const res = await fetch("/rules", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({yaml}),
-        });
-        if (res.ok) {
-          msg.textContent = "✓ 적용됨";
-          msg.className = "msg ok";
-        } else {
-          const err = await res.json();
-          msg.textContent = "오류: " + (err.detail || res.status);
-          msg.className = "msg err";
-        }
-      } catch (e) {
-        msg.textContent = "오류: " + e.message;
-        msg.className = "msg err";
-      }
-    });
-
-    document.getElementById("reload-btn").addEventListener("click", async () => {
-      await fetch("/rules/reload", {method: "POST"});
-      const r = await fetch("/rules").then(r => r.json());
-      document.getElementById("yaml-text").value = r.yaml || "";
-    });
-
-    setInterval(poll, 500);
-    poll();
-    loadAdmin();
-  </script>
-</body>
-</html>
-"""
 
 
 class _RulesUpdate(BaseModel):
@@ -319,7 +127,7 @@ class WebSink:
 
         @app.get("/", response_class=HTMLResponse)
         def index():
-            return HTML_PAGE
+            return _load_html()
 
         @app.get("/stream")
         def stream():
@@ -345,8 +153,20 @@ class WebSink:
         def get_rules():
             rs = self._admin.get("rules_state")
             if rs is None:
-                return {"path": None, "yaml": ""}
-            return {"path": rs.path, "yaml": rs.read_yaml_text()}
+                return {"path": None, "yaml": "", "parsed": _empty_parsed()}
+            rules, _ = rs.current()
+            return {
+                "path": rs.path,
+                "yaml": rs.read_yaml_text(),
+                "parsed": _rules_to_dict(rules),
+            }
+
+        @app.get("/frame_size")
+        def frame_size():
+            cap = self._admin.get("capture_config")
+            if cap is None:
+                return {"width": 640, "height": 480}
+            return {"width": cap.frame_width, "height": cap.frame_height}
 
         @app.post("/rules")
         def post_rules(body: _RulesUpdate):

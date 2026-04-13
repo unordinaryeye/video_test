@@ -156,7 +156,11 @@ def main():
     # 2. 컴포넌트 생성
     capture = FrameCapture(config.capture, frame_queue)
     inference = InferenceWorker(frame_queue, result_queue, client, rules_state=rules_state)
-    admin_ctx = {"rules_state": rules_state, "model_config": config.model}
+    admin_ctx = {
+        "rules_state": rules_state,
+        "model_config": config.model,
+        "capture_config": config.capture,
+    }
     sink = SinkWorker(result_queue, create_sink(config.sink, admin_ctx=admin_ctx))
 
     # 3. 시작 (순서: sink -> inference -> capture)
