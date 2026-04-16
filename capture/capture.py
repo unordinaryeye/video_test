@@ -34,12 +34,16 @@ def _mask_rtsp_credentials(uri: str) -> str:
 class FrameCapture:
     """영상 소스에서 프레임을 캡처하여 큐에 넣는 워커."""
 
+    # RTSP freeze 감지 임계값 (초). 이 시간 동안 새 프레임이 없으면 강제 재연결.
+    RTSP_STALL_THRESHOLD_SEC = 10.0
+
     def __init__(self, config: CaptureConfig, output_queue: queue.Queue):
         self._config = config
         self._queue = output_queue
         self._running = False
         self._thread = None
         self._frame_count = 0
+        self._source: VideoSource | None = None
 
     def start(self):
         self._running = True
@@ -54,11 +58,16 @@ class FrameCapture:
         logger.info(f"Capture 종료 (총 {self._frame_count}프레임)")
 
     def _capture_loop(self):
-        source = self._create_source()
+        self._source = self._create_source()
 
         try:
             while self._running:
-                frame = source.read()
+                # RTSP freeze 워치독: 장시간 프레임 없으면 강제 재연결
+                if isinstance(self._source, RTSPSource) and \
+                        self._source.is_stalled(self.RTSP_STALL_THRESHOLD_SEC):
+                    self._source.force_reconnect()
+
+                frame = self._source.read()
                 if frame is None:
                     logger.warning("프레임 읽기 실패, 재시도...")
                     time.sleep(0.5)
@@ -82,7 +91,31 @@ class FrameCapture:
                 fps = max(self._config.fps, 1)
                 time.sleep(1.0 / fps)
         finally:
-            source.release()
+            self._source.release()
+
+    def status(self) -> dict:
+        """현재 캡처 상태 스냅샷. 웹UI/관리 API에서 조회."""
+        src = self._source
+        base = {
+            "source_type": self._config.source_type,
+            "frame_count": self._frame_count,
+            "fps_target": self._config.fps,
+            "running": self._running,
+        }
+        if isinstance(src, RTSPSource):
+            base.update({
+                "rtsp_uri": src._masked_uri,
+                "connected": src._cap is not None,
+                "reconnect_count": src.reconnect_count,
+                "last_frame_ts": src.last_frame_ts,
+                "seconds_since_last_frame": (
+                    time.time() - src.last_frame_ts
+                    if src.last_frame_ts > 0 else None
+                ),
+                "stalled": src.is_stalled(self.RTSP_STALL_THRESHOLD_SEC),
+                "stall_threshold_sec": self.RTSP_STALL_THRESHOLD_SEC,
+            })
+        return base
 
     def _create_source(self) -> "VideoSource":
         """source_type에 따라 소스 생성. 새 소스를 추가하려면 여기에 분기 추가."""
@@ -228,6 +261,26 @@ class RTSPSource(VideoSource):
 
         self.last_frame_ts = time.time()
         return frame
+
+    def is_stalled(self, threshold_sec: float) -> bool:
+        """마지막 프레임 이후 threshold 초 이상 경과했으면 True.
+
+        RTSP는 ret=True로 오래된 프레임만 계속 오는 freeze 상태가 있어서
+        재연결 트리거 여부를 외부(FrameCapture 워치독)에서 결정하도록 노출.
+        last_frame_ts=0 (아직 한 번도 성공한 적 없음)인 경우는 False.
+        """
+        if self.last_frame_ts == 0.0:
+            return False
+        return (time.time() - self.last_frame_ts) >= threshold_sec
+
+    def force_reconnect(self) -> None:
+        """워치독이 호출. 다음 read()에서 backoff 대기 없이 즉시 재연결."""
+        logger.warning(f"RTSP 강제 재연결 [{self._masked_uri}]")
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+        self._last_attempt = 0.0
+        self._backoff = self.INITIAL_BACKOFF_SEC
 
     def release(self):
         if self._cap is not None:

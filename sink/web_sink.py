@@ -165,6 +165,13 @@ class WebSink:
                 "parsed": _rules_to_dict(rules),
             }
 
+        @app.get("/capture_status")
+        def capture_status():
+            cap = self._admin.get("capture")
+            if cap is None or not hasattr(cap, "status"):
+                return {"available": False}
+            return {"available": True, **cap.status()}
+
         @app.get("/frame_size")
         def frame_size():
             cap = self._admin.get("capture_config")

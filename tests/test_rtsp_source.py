@@ -121,6 +121,36 @@ def test_read_failure_marks_disconnected_and_increments_count():
         assert source.reconnect_count == initial_count + 1
 
 
+def test_is_stalled_false_before_first_frame():
+    """아직 한 번도 프레임 못 받은 상태에서는 stalled 아님."""
+    with patch("capture.capture.cv2.VideoCapture", return_value=_make_cap(opened=False)):
+        source = RTSPSource("rtsp://localhost/x", CaptureConfig())
+        assert source.is_stalled(1.0) is False
+
+
+def test_is_stalled_true_after_threshold():
+    frame = np.zeros((1, 1, 3), dtype=np.uint8)
+    with patch("capture.capture.cv2.VideoCapture",
+               return_value=_make_cap(opened=True, frames=[frame])):
+        source = RTSPSource("rtsp://localhost/x", CaptureConfig())
+        source.read()
+        assert source.is_stalled(1000.0) is False
+        source.last_frame_ts = time.time() - 15.0  # 15초 전 마지막 프레임
+        assert source.is_stalled(10.0) is True
+
+
+def test_force_reconnect_clears_cap_and_resets_backoff():
+    frame = np.zeros((1, 1, 3), dtype=np.uint8)
+    with patch("capture.capture.cv2.VideoCapture",
+               return_value=_make_cap(opened=True, frames=[frame])):
+        source = RTSPSource("rtsp://localhost/x", CaptureConfig())
+        source._backoff = 16.0
+        source.force_reconnect()
+        assert source._cap is None
+        assert source._last_attempt == 0.0
+        assert source._backoff == RTSPSource.INITIAL_BACKOFF_SEC
+
+
 def test_release_is_idempotent():
     """release를 여러 번 호출해도 에러 없어야 한다."""
     with patch("capture.capture.cv2.VideoCapture", return_value=_make_cap(opened=False)):

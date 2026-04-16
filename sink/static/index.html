@@ -111,6 +111,13 @@
       <div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="fps">0</span></div>
     </div>
 
+    <div class="card" style="margin-top:16px;" id="capture-status-card" hidden>
+      <h2>캡처 상태 <span id="capture-badge" style="font-size:12px;padding:2px 8px;border-radius:10px;margin-left:8px;"></span></h2>
+      <div class="stat"><span class="stat-label">소스</span><span class="stat-value" id="cap-source" style="font-size:13px;">-</span></div>
+      <div class="stat"><span class="stat-label">재연결 횟수</span><span class="stat-value" id="cap-reconnects">0</span></div>
+      <div class="stat"><span class="stat-label">마지막 프레임</span><span class="stat-value" id="cap-last-frame">-</span></div>
+    </div>
+
     <div class="card" style="margin-top:16px;">
       <h2>최근 감지 로그</h2>
       <div class="log" id="log"></div>
@@ -606,6 +613,27 @@ async function poll() {
   } catch (e) {}
 }
 
+async function pollCaptureStatus() {
+  try {
+    const d = await fetch("/capture_status").then(r => r.json());
+    const card = q("#capture-status-card");
+    if (!d.available || d.source_type !== "rtsp") { card.hidden = true; return; }
+    card.hidden = false;
+    q("#cap-source").textContent = d.rtsp_uri || "-";
+    q("#cap-reconnects").textContent = d.reconnect_count ?? 0;
+    const sec = d.seconds_since_last_frame;
+    q("#cap-last-frame").textContent = sec == null ? "대기 중" : `${sec.toFixed(1)}초 전`;
+    const badge = q("#capture-badge");
+    if (!d.connected) {
+      badge.textContent = "재연결 중"; badge.style.background = "#f59e0b"; badge.style.color = "#0f172a";
+    } else if (d.stalled) {
+      badge.textContent = "Stalled"; badge.style.background = "#ef4444"; badge.style.color = "#fff";
+    } else {
+      badge.textContent = "정상"; badge.style.background = "#10b981"; badge.style.color = "#0f172a";
+    }
+  } catch (e) {}
+}
+setInterval(pollCaptureStatus, 1000); pollCaptureStatus();
 setInterval(poll, 500); poll();
 loadFrameSize(); loadTracking(); loadFps(); loadClasses(); loadRules();
 </script>

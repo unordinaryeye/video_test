@@ -160,6 +160,7 @@ def main():
         "rules_state": rules_state,
         "model_config": config.model,
         "capture_config": config.capture,
+        "capture": capture,
     }
     sink = SinkWorker(result_queue, create_sink(config.sink, admin_ctx=admin_ctx))
 
