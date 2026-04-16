@@ -3,18 +3,32 @@
 import base64
 import io
 import logging
+import os
 import queue
+import re
 import threading
 import time
 from datetime import datetime, timezone
 
-import cv2
-import numpy as np
-from PIL import Image
+# RTSP는 기본 UDP라 패킷 손실이 많고, 끊김 시 소켓이 무한 블로킹됨.
+# OpenCV가 cv2를 import하기 전에 환경변수를 읽으므로 여기서 설정.
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "rtsp_transport;tcp|stimeout;5000000",
+)
 
-from config import CaptureConfig
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+from PIL import Image  # noqa: E402
+
+from config import CaptureConfig  # noqa: E402
 
 logger = logging.getLogger("capture")
+
+
+def _mask_rtsp_credentials(uri: str) -> str:
+    """rtsp://id:pw@host → rtsp://***@host 로 마스킹."""
+    return re.sub(r"(rtsp://)([^/@]+)@", r"\1***@", uri)
 
 
 class FrameCapture:
@@ -147,24 +161,78 @@ class FileSource(VideoSource):
 
 
 class RTSPSource(VideoSource):
+    """RTSP 소스. 끊김 시 exponential backoff로 재연결하며 예외를 던지지 않는다.
+
+    운영 중 CCTV 서버가 잠깐 꺼져도 파이프라인 전체가 죽지 않도록
+    생성자에서 연결 실패해도 예외 대신 None 반환 상태로 시작한다.
+    """
+
+    INITIAL_BACKOFF_SEC = 1.0
+    MAX_BACKOFF_SEC = 30.0
+
     def __init__(self, uri: str, config: CaptureConfig):
         self._uri = uri
-        self._cap = cv2.VideoCapture(uri)
-        if not self._cap.isOpened():
-            raise RuntimeError(f"RTSP 연결 실패: {uri}")
-        logger.info(f"RTSP 소스 연결: {uri}")
+        self._masked_uri = _mask_rtsp_credentials(uri)
+        self._cap: cv2.VideoCapture | None = None
+        self._backoff = self.INITIAL_BACKOFF_SEC
+        self._last_attempt = 0.0
+        self.reconnect_count = 0
+        self.last_frame_ts: float = 0.0
+        self._open()
+
+    def _open(self) -> bool:
+        """연결 시도. 성공 시 True, 실패 시 False (예외 없음)."""
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+        self._last_attempt = time.time()
+
+        cap = cv2.VideoCapture(self._uri, cv2.CAP_FFMPEG)
+        # 버퍼 누적으로 인한 지연 방지 — 항상 최신 프레임만
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        if not cap.isOpened():
+            logger.warning(
+                f"RTSP 연결 실패 [{self._masked_uri}], "
+                f"{self._backoff:.1f}s 후 재시도"
+            )
+            return False
+
+        self._cap = cap
+        self._backoff = self.INITIAL_BACKOFF_SEC  # 성공 시 backoff 리셋
+        logger.info(f"RTSP 소스 연결: {self._masked_uri}")
+        return True
+
+    def _schedule_reconnect(self):
+        """재연결 폭주 방지. backoff를 두 배로 늘리며 상한에서 캡."""
+        self._backoff = min(self._backoff * 2, self.MAX_BACKOFF_SEC)
 
     def read(self) -> np.ndarray | None:
+        # 끊긴 상태: backoff 경과 후에만 재시도
+        if self._cap is None:
+            if time.time() - self._last_attempt >= self._backoff:
+                self.reconnect_count += 1
+                if not self._open():
+                    self._schedule_reconnect()
+            return None
+
         ret, frame = self._cap.read()
         if not ret:
-            logger.warning("RTSP 끊김, 재연결 시도...")
+            logger.warning(
+                f"RTSP 프레임 실패 [{self._masked_uri}], backoff={self._backoff:.1f}s"
+            )
             self._cap.release()
-            self._cap = cv2.VideoCapture(self._uri)
+            self._cap = None
+            self._last_attempt = time.time()
             return None
+
+        self.last_frame_ts = time.time()
         return frame
 
     def release(self):
-        self._cap.release()
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
 
 
 class SyntheticSource(VideoSource):
