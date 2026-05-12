@@ -3,6 +3,7 @@
 import base64
 import logging
 import os
+import secrets
 import threading
 import time
 from collections import deque
@@ -12,12 +13,41 @@ import cv2
 import httpx
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
 logger = logging.getLogger("sink.web")
+
+
+def _build_auth_dependency():
+    """WEB_USERNAME/WEB_PASSWORD 환경변수가 있으면 Basic Auth 의존성 반환, 없으면 None.
+
+    외부 노출(Cloudflare Tunnel 등) 시 id/pw 설정을 강제하고,
+    로컬 개발 시엔 환경변수 없이 그대로 써도 되게 한다.
+    """
+    expected_user = os.environ.get("WEB_USERNAME")
+    expected_pass = os.environ.get("WEB_PASSWORD")
+    if not expected_user or not expected_pass:
+        logger.info("WEB_USERNAME/WEB_PASSWORD 미설정 — Basic Auth 비활성 (로컬 전용)")
+        return None
+
+    logger.info(f"Basic Auth 활성 — 사용자: {expected_user}")
+    security = HTTPBasic()
+
+    def check(credentials: HTTPBasicCredentials = Depends(security)):
+        ok_user = secrets.compare_digest(credentials.username, expected_user)
+        ok_pass = secrets.compare_digest(credentials.password, expected_pass)
+        if not (ok_user and ok_pass):
+            raise HTTPException(
+                status_code=401,
+                detail="인증 실패",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+
+    return check
 
 
 _FONT_CANDIDATES = [
@@ -127,7 +157,11 @@ class WebSink:
         logger.info(f"WebSink 서버 시작: http://{host}:{port}")
 
     def _build_app(self) -> FastAPI:
-        app = FastAPI(title="Pipeline Viewer")
+        auth = _build_auth_dependency()
+        app = FastAPI(
+            title="Pipeline Viewer",
+            dependencies=[Depends(auth)] if auth else [],
+        )
 
         @app.get("/", response_class=HTMLResponse)
         def index():
@@ -149,6 +183,7 @@ class WebSink:
                 "last_events": self._last_events,
                 "last_latency_ms": round(self._last_latency, 1),
                 "fps": self._frame_count / elapsed,
+                "drops": self._collect_drops(),
                 "log": list(self._log),
             }
 
@@ -242,6 +277,21 @@ class WebSink:
 
         return app
 
+    def _collect_drops(self) -> dict:
+        """capture / inference / sink 각 단계의 드롭 카운트 스냅샷."""
+        out = {"capture": 0, "inference": 0, "sink": 0}
+        cap = self._admin.get("capture")
+        if cap is not None and hasattr(cap, "status"):
+            out["capture"] = cap.status().get("dropped", 0)
+        inf = self._admin.get("inference_worker")
+        if inf is not None and hasattr(inf, "stats"):
+            out["inference"] = inf.stats().get("dropped", 0)
+        holder = self._admin.get("sink_worker_holder") or {}
+        sw = holder.get("worker")
+        if sw is not None and hasattr(sw, "stats"):
+            out["sink"] = sw.stats().get("dropped", 0)
+        return out
+
     def _run_server(self, host: str, port: int):
         uvicorn.run(self._app, host=host, port=port, log_level="warning")
 
@@ -254,7 +304,7 @@ class WebSink:
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
                 )
-            time.sleep(0.05)
+            time.sleep(0.03)
 
     def _draw_overlays(self, frame: np.ndarray, detections: list, zone_events: list,
                        frame_id: int, latency: float) -> np.ndarray:

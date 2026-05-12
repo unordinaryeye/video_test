@@ -48,5 +48,5 @@ class PipelineConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     sink: SinkConfig = field(default_factory=SinkConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
-    queue_max_size: int = 30
+    queue_max_size: int = 2
     log_level: str = "INFO"

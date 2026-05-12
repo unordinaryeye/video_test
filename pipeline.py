@@ -161,8 +161,12 @@ def main():
         "model_config": config.model,
         "capture_config": config.capture,
         "capture": capture,
+        "inference_worker": inference,
     }
+    sink_worker_holder = {}
+    admin_ctx["sink_worker_holder"] = sink_worker_holder
     sink = SinkWorker(result_queue, create_sink(config.sink, admin_ctx=admin_ctx))
+    sink_worker_holder["worker"] = sink  # 순환 참조 방지용 지연 바인딩
 
     # 3. 시작 (순서: sink -> inference -> capture)
     sink.start()

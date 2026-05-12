@@ -32,6 +32,7 @@ class InferenceWorker:
         self._running = False
         self._thread = None
         self._processed = 0
+        self._dropped = 0  # latest-only 정책으로 버려진 입력 프레임 수
 
     def start(self):
         self._running = True
@@ -44,7 +45,12 @@ class InferenceWorker:
         if self._thread:
             self._thread.join(timeout=5)
         self._client.close()
-        logger.info(f"Inference 워커 종료 (처리: {self._processed}프레임)")
+        logger.info(
+            f"Inference 워커 종료 (처리: {self._processed}프레임, 드롭: {self._dropped})"
+        )
+
+    def stats(self) -> dict:
+        return {"processed": self._processed, "dropped": self._dropped}
 
     def _apply_rules(self, detections: list[dict]) -> tuple[list[dict], list[dict]]:
         """룰 적용. 반환: (필터링된 detections, zone_events dict 목록)."""
@@ -75,6 +81,16 @@ class InferenceWorker:
                 frame_data = self._input.get(timeout=1.0)
             except queue.Empty:
                 continue
+
+            # 실시간성 우선: 큐에 밀려있는 프레임이 있으면 최신 것만 처리.
+            while True:
+                try:
+                    newer = self._input.get_nowait()
+                except queue.Empty:
+                    break
+                # 직전에 잡고 있던 frame_data를 버리고 더 새 것으로 교체.
+                self._dropped += 1
+                frame_data = newer
 
             try:
                 start = time.perf_counter()

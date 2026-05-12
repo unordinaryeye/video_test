@@ -27,6 +27,8 @@ results/
 *.jpg
 *.jpeg
 *.png
+*.log
+*.err
 
 # Internal reports (do not publish)
 구현_현황_보고.md

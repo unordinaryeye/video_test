@@ -43,6 +43,7 @@ class FrameCapture:
         self._running = False
         self._thread = None
         self._frame_count = 0
+        self._dropped = 0  # 큐 full 상태에서 버려진 프레임 수
         self._source: VideoSource | None = None
 
     def start(self):
@@ -55,7 +56,9 @@ class FrameCapture:
         self._running = False
         if self._thread:
             self._thread.join(timeout=5)
-        logger.info(f"Capture 종료 (총 {self._frame_count}프레임)")
+        logger.info(
+            f"Capture 종료 (총 {self._frame_count}프레임, 드롭: {self._dropped})"
+        )
 
     def _capture_loop(self):
         self._source = self._create_source()
@@ -79,6 +82,7 @@ class FrameCapture:
                 if self._queue.full():
                     try:
                         self._queue.get_nowait()
+                        self._dropped += 1
                     except queue.Empty:
                         pass
 
@@ -99,6 +103,7 @@ class FrameCapture:
         base = {
             "source_type": self._config.source_type,
             "frame_count": self._frame_count,
+            "dropped": self._dropped,
             "fps_target": self._config.fps,
             "running": self._running,
         }
