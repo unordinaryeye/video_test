@@ -22,10 +22,32 @@ _predict_lock = threading.Lock()
 def load_model():
     """모델 로드. 다른 모델로 바꾸려면 이 함수만 수정."""
     global _model
+    import torch
     from ultralytics import YOLO
     _model = YOLO("yolov8n.pt")  # nano 모델, ~6MB, VRAM ~1GB
-    logger.info("YOLOv8n 모델 로드 완료")
+    if torch.cuda.is_available():
+        device = f"cuda:0 ({torch.cuda.get_device_name(0)})"
+        _model.to("cuda:0")
+    else:
+        device = "cpu"
+    logger.info(f"YOLOv8n 모델 로드 완료 — device={device}, torch={torch.__version__}")
     return _model
+
+
+def _device_info():
+    """현재 추론 디바이스 정보를 dict로 반환 (헬스체크용)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return {
+                "device": "cuda",
+                "device_name": torch.cuda.get_device_name(0),
+                "torch_version": torch.__version__,
+                "cuda_version": torch.version.cuda,
+            }
+        return {"device": "cpu", "torch_version": torch.__version__, "cuda_version": None}
+    except Exception as e:
+        return {"device": "unknown", "error": str(e)}
 
 
 def get_model():
@@ -66,7 +88,11 @@ async def startup():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model_loaded": _model is not None}
+    return {
+        "status": "ok",
+        "model_loaded": _model is not None,
+        **_device_info(),
+    }
 
 
 @app.get("/classes")

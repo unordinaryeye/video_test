@@ -9,6 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
+
+# PyTorch를 CUDA 12.4 호환 버전으로 먼저 고정 설치 (호스트 드라이버 550+ 요구).
+# 이 단계를 건너뛰면 ultralytics가 최신 cu130 torch를 끌어와서 드라이버 불일치 발생.
+RUN pip3 install --no-cache-dir \
+    torch==2.5.1 torchvision==0.20.1 \
+    --index-url https://download.pytorch.org/whl/cu124
+
 RUN pip3 install --no-cache-dir \
     fastapi==0.111.0 \
     uvicorn==0.30.1 \
